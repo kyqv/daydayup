@@ -1,0 +1,48 @@
+@startuml upload
+
+title vod上传
+
+== 预上传 ==
+autonumber
+
+sdk -> uploadapi: http post "/vod/preupload"
+
+alt video类型资源
+uploadapi -> mediamanager: rpc GenerateVID 生成ID
+mediamanager-> Redis: incr自增ID
+mediamanager-> uploadapi: 规则:{region：2位}_{uuid：16位}_{schemaIndex:本地配置000+dbIdx:自增ID取后三位}\nDB号:{schemaIndex:本地配置000+dbIdx:自增ID取后三位}\n自增ID：DB记录当前序列号，用redis缓存。\n主备容灾：10s定时同步redis最新的序列号到mysql。
+else image、audio资源
+uploadapi -> mediamanager: rpc GenerateMid 生成ID
+mediamanager-> Redis: sonyflake生成分布式唯一ID\nredis保存
+mediamanager-> uploadapi: 返回ID
+end
+
+uploadapi -> Strategyservice: rpc GetStrategyInfo获取调度策略
+Strategyservice -> Strategyservice: 查询调度策略配置获取CDN域名
+Strategyservice-> uploadapi:返回CDN域名
+uploadapi ->uploadapi: 根据serviceOrder获取Token及其他信息,如果未取到结果，兜底返回网宿云
+uploadapi -> sdk: 返回云服务列表
+sdk -> endpointSDK:定期拉取策略配置，获取IP直出规则，并进行请求拦截改造操作（domain、host替换等）
+sdk -> sdk:最终上传resp
+
+
+== SDK上传 ==
+autonumber
+sdk->cloud:文件传输
+cloud --> uss:异步回迁
+
+== 回报结果，触发视频处理流程 ==
+autonumber
+sdk -> uploadapi: http post "/vod/reportupload"
+note right 
+上报质量
+end note
+
+uploadapi -> mediamanager: 创建媒资信息落库\nrpc CreateVideoInfoWithFormat/CreateMediaInfoAndFormat
+mediamanager -> mysql: insert video_infos_tab_\n insert video_format_infos_tab_
+mediamanager -> redis: redis处理
+uploadapi -> vodprocess: rpc SubmitFlowTask提交流程任务
+uploadapi -> sdk: 返回结果
+
+
+@enduml

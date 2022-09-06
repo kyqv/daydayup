@@ -1,0 +1,52 @@
+@startuml upload
+
+title 图片上传
+
+== 图片预上传 ==
+autonumber
+
+sdk -> uploadapi: http post "/image/preupload"
+opt 参数校验
+uploadapi -> uploadapi: 上报请求IP
+uploadapi -> uploadapi: 业务限流校验(apollo配置)
+uploadapi -> uploadapi: IP黑名单(apollo)
+end
+
+alt 检查不通过
+uploadapi -> sdk: 返回400错误
+else 通过
+opt 获取Service及Token信息
+uploadapi -> Strategyservice: rpc GetStrategyInfo
+Strategyservice -> Strategyservice: 获取业务上传规则bizRules，不同业务可能有不同的上传云服务要求
+database mysql
+Strategyservice --> mysql:mms_strategy_tab存储的各种调度策略
+mysql --> Strategyservice:缓存到本地
+Strategyservice -> Strategyservice: 按照获取调度信息feedBackRules
+Strategyservice -> LivetechGeoipService: 按照IP获取Geo地理位置信息
+Strategyservice -> Strategyservice: 策略匹配顺序：运营商+省份结合 ,运营商 ,省份（每条链路先查cid匹配，再查*匹配）
+Strategyservice -> Strategyservice: 有feedBackRules整合bizRules,没有feedBackRules直接用bizRules
+
+
+Strategyservice -> uploadapi: 云服务列表
+uploadapi->cloud:ws,uss云服务生成token
+uploadapi -> uploadapi: token加密
+uploadapi -> uploadapi: 雪花算法生成ImgId列表
+uploadapi -> sdk: 返回成功（云服务商列表，ImgId列表，token）
+end
+
+
+== SDK图片上传 ==
+autonumber
+sdk->cloud:文件传输
+cloud --> uss:异步回迁
+
+== SDK回报结果,触发图片处理任务 ==
+autonumber
+sdk -> uploadapi: http post "/image/notify"
+uploadapi -> uploadapi: 参数校验
+uploadapi -> imageserver: 提交图片处理任务
+imageserver ->imageserver:图片任务流处理
+
+end
+
+@enduml
